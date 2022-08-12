@@ -331,7 +331,7 @@ class Game():
         is_move = False
         for part in command.split()[1:]:
             if is_move:
-                self._make_uci_move(part)
+                self.make_uci_move(part)
             elif part == 'startpos':
                 self.initial_pos()
             elif part == 'fen': 

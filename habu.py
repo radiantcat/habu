@@ -344,7 +344,7 @@ class Game():
             print(self.positions[-1], self.to_fen())
         return nnue.nnue_evaluate_fen(bytes(self.positions[-1], encoding='utf-8'))
 
-    def move_values(self, movelist, history, killer_move = None, hash_move = None):
+    def move_values(self, movelist, history, killer_move = None, killer2 = None, hash_move = None):
         # Give every move a score for ordering
         scores = {}
         for move in movelist:
@@ -354,6 +354,8 @@ class Game():
                 scores[move] = HIST_MAX + 2000 + piece_vals[self.board[move[1]] - 6] - piece_vals[self.board[move[0]]]
             else:
                 if move == killer_move:
+                    scores[move] = HIST_MAX + 2
+                elif move == killer2:
                     scores[move] = HIST_MAX + 1
                 else:
                     scores[move] = history.get(move, 0)
@@ -374,6 +376,7 @@ class Searcher:
 
         self.history = {} # History table for move ordering
         self.killer = {} # Killer move for each ply
+        self.killer2 = {}
         self.tt = {} # Transposition table
 
         self.start_depth = 0
@@ -472,7 +475,7 @@ class Searcher:
 
         # Generate and sort moves
         movelist = game.movegen()
-        scores = game.move_values(movelist, self.history, self.killer.get(ply, 0), hash_move)
+        scores = game.move_values(movelist, self.history, self.killer.get(ply, 0), self.killer2.get(ply, 0), hash_move)
         movelist.sort(key = lambda x: scores[x], reverse=True)
 
         for move in movelist:            
@@ -516,7 +519,11 @@ class Searcher:
                     if score >= beta:
                         if not game.is_capture(move): # Update history tables
                             self.history[move] = min(HIST_MAX, self.history.get(move, 0) + depth * depth)
-                            self.killer[ply] = move
+                            k, k2 = self.killer.get(ply), self.killer2.get(ply)
+                            if k != k2:
+                                self.killer2[ply] = k
+                                self.killer[ply] = move
+                            else: self.killer[ply] = move
                         tt_flag = TT_LOWER
                         for m in movelist:
                             if m == move: break
@@ -543,7 +550,8 @@ class Searcher:
         # Reset history tables
         self.history = {}
         self.killer = {}
-        self.tt = {}
+        self.killer2 = {}
+        #self.tt = {}
 
         move = None
         self.nodes = 0
@@ -623,4 +631,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 

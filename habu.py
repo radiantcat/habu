@@ -108,6 +108,8 @@ TT_EXACT = 1
 TT_UPPER = 2
 TT_LOWER = 3
 
+FUTILITY_MARGIN = 180
+RAZOR_MARGIN = 500
 ASPIRATION_DELTA = 30
 
 #
@@ -340,8 +342,6 @@ class Game():
                 is_move = True
 
     def evaluate_nnue(self):
-        if self.positions[-1] != self.to_fen():
-            print(self.positions[-1], self.to_fen())
         return nnue.nnue_evaluate_fen(bytes(self.positions[-1], encoding='utf-8'))
 
     def move_values(self, movelist, history, killer_move = None, killer2 = None, hash_move = None):
@@ -455,9 +455,19 @@ class Searcher:
         in_check = game.in_check()
         evalu = game.evaluate_nnue()
 
-        # Null move pruning 
-        if not is_pv_node and do_pruning and not in_check and game.has_non_pawns():
-            if depth >= 2 and evalu >= beta:
+        if not is_pv_node and do_pruning and not in_check:
+            # Razoring
+            if depth <= 3 and evalu + RAZOR_MARGIN < beta:
+                score = self.qsearch(game, alpha, beta)
+                if score < beta:
+                    return score
+
+            # Futility Pruning
+            if depth <= 6 and evalu >= beta + FUTILITY_MARGIN * depth:
+                return evalu
+
+            # Null move pruning 
+            if depth >= 2 and evalu >= beta and game.has_non_pawns():
                 cpy = game.copy()
                 cpy.enp = 0
                 cpy.rotate()
@@ -551,7 +561,7 @@ class Searcher:
         self.history = {}
         self.killer = {}
         self.killer2 = {}
-        #self.tt = {}
+        self.tt = {}
 
         move = None
         self.nodes = 0

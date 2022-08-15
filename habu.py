@@ -358,6 +358,7 @@ class Searcher:
         self.finish_time = 0
 
         self.history = {} # History table for move ordering
+        self.counter_hist = {}
         self.counter_move = {}
         self.killer = {} # Killer move for each ply
         self.killer2 = {}
@@ -376,18 +377,19 @@ class Searcher:
         scores = {}
         for move in movelist:
             if move == hash_move:
-                scores[move] = HIST_MAX + 5000
+                scores[move] = 2 * HIST_MAX + 5000
             elif game.is_capture(move):
-                scores[move] = HIST_MAX + 2000 + piece_vals[game.board[move[1]] - 6] - piece_vals[game.board[move[0]]]
+                scores[move] = 2 * HIST_MAX + 2000 + piece_vals[game.board[move[1]] - 6] - piece_vals[game.board[move[0]]]
             else:
                 if move == killer_move:
-                    scores[move] = HIST_MAX + 3
+                    scores[move] = 2 * HIST_MAX + 3
                 elif move == killer_move2:
-                    scores[move] = HIST_MAX + 2
+                    scores[move] = 2 * HIST_MAX + 2
                 elif move == counter:
-                    scores[move] = HIST_MAX + 1
+                    scores[move] = 2 * HIST_MAX + 1
                 else:
                     scores[move] = self.history.get(move, 0)
+                    scores[move] += self.counter_hist.get((opp_move, move), 0)
 
         return scores
 
@@ -536,7 +538,9 @@ class Searcher:
                     if score >= beta:
                         if not game.is_capture(move): # Update history tables
                             self.history[move] = min(HIST_MAX, self.history.get(move, 0) + depth * depth)
-                            if opp_move: self.counter_move[opp_move] = move
+                            if opp_move: 
+                                self.counter_move[opp_move] = move
+                                self.counter_hist[(opp_move, move)] = min(HIST_MAX, self.counter_hist.get((opp_move, move), 0) + depth * depth)
                             k, k2 = self.killer.get(ply), self.killer2.get(ply)
                             if k != k2:
                                 self.killer2[ply] = k
@@ -546,6 +550,8 @@ class Searcher:
                         for m in movelist:
                             if m == move: break
                             self.history[m] = max(-HIST_MAX, self.history.get(m, 0) - depth * depth)
+                            if opp_move:
+                                self.counter_hist[(opp_move, m)] = max(-HIST_MAX, self.counter_hist.get((opp_move, m), 0) - depth * depth)
                         break
 
         if legal_moves == 0:
@@ -567,6 +573,7 @@ class Searcher:
 
         # Reset history tables
         self.history = {}
+        self.counter_hist = {}
         self.counter_move = {}
         self.killer = {}
         self.killer2 = {}

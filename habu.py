@@ -344,23 +344,6 @@ class Game():
     def evaluate_nnue(self):
         return nnue.nnue_evaluate_fen(bytes(self.positions[-1], encoding='utf-8'))
 
-    def move_values(self, movelist, history, killer_move = None, killer2 = None, hash_move = None):
-        # Give every move a score for ordering
-        scores = {}
-        for move in movelist:
-            if move == hash_move:
-                scores[move] = HIST_MAX + 5000
-            elif self.is_capture(move):
-                scores[move] = HIST_MAX + 2000 + piece_vals[self.board[move[1]] - 6] - piece_vals[self.board[move[0]]]
-            else:
-                if move == killer_move:
-                    scores[move] = HIST_MAX + 2
-                elif move == killer2:
-                    scores[move] = HIST_MAX + 1
-                else:
-                    scores[move] = history.get(move, 0)
-        return scores
-
     def has_non_pawns(self):
         return any(p in self.board for p in [KNIGHT, BISHOP, ROOK, QUEEN])
 
@@ -375,6 +358,7 @@ class Searcher:
         self.finish_time = 0
 
         self.history = {} # History table for move ordering
+        self.counter_move = {}
         self.killer = {} # Killer move for each ply
         self.killer2 = {}
         self.tt = {} # Transposition table
@@ -383,6 +367,29 @@ class Searcher:
 
     def reset_timer(self, tt):
         self.finish_time = time.perf_counter() + tt
+
+    def move_values(self, game, movelist, ply, opp_move, hash_move):
+        # Give every move a score for ordering
+        killer_move = self.killer.get(ply)
+        killer_move2 = self.killer2.get(ply)
+        counter = self.counter_move.get(opp_move)
+        scores = {}
+        for move in movelist:
+            if move == hash_move:
+                scores[move] = HIST_MAX + 5000
+            elif game.is_capture(move):
+                scores[move] = HIST_MAX + 2000 + piece_vals[game.board[move[1]] - 6] - piece_vals[game.board[move[0]]]
+            else:
+                if move == killer_move:
+                    scores[move] = HIST_MAX + 3
+                elif move == killer_move2:
+                    scores[move] = HIST_MAX + 2
+                elif move == counter:
+                    scores[move] = HIST_MAX + 1
+                else:
+                    scores[move] = self.history.get(move, 0)
+
+        return scores
 
     def qsearch(self, game, alpha, beta):
         val = game.evaluate_nnue()
@@ -395,7 +402,7 @@ class Searcher:
             alpha = val
 
         movelist = [m for m in game.movegen() if game.is_capture(m)]
-        scores = game.move_values(movelist, self.history)
+        scores = self.move_values(game, movelist, 0, None, None)
         movelist.sort(key = lambda x: scores[x], reverse=True)
 
         for move in movelist:
@@ -420,7 +427,7 @@ class Searcher:
 
         return val
 
-    def search(self, game, depth, alpha, beta, ply, do_pruning, root = False):
+    def search(self, game, depth, alpha, beta, ply, do_pruning, opp_move, root = False):
 
         repetitions = 0
         if not root:
@@ -473,7 +480,7 @@ class Searcher:
                 cpy.rotate()
                 reduction = 3
                 cpy.positions.append(cpy.to_fen())
-                score = -self.search(cpy, depth - reduction, -beta, -beta + 1, ply + 1, False)
+                score = -self.search(cpy, depth - reduction, -beta, -beta + 1, ply + 1, False, None)
                 cpy.positions.pop()
                 if score >= beta:
                     return score
@@ -485,7 +492,7 @@ class Searcher:
 
         # Generate and sort moves
         movelist = game.movegen()
-        scores = game.move_values(movelist, self.history, self.killer.get(ply, 0), self.killer2.get(ply, 0), hash_move)
+        scores = self.move_values(game, movelist, ply, opp_move, hash_move)
         movelist.sort(key = lambda x: scores[x], reverse=True)
 
         for move in movelist:            
@@ -507,18 +514,18 @@ class Searcher:
             # Principal Variation Search
             score = None
             if legal_moves == 1:
-                score = -self.search(cpy, depth - 1 + ext, -beta, -alpha, ply + 1, True)
+                score = -self.search(cpy, depth - 1 + ext, -beta, -alpha, ply + 1, True, move)
             else:
                 # Late Move Reductions for quiet moves
                 reduction = 0
                 if depth >= 3 and legal_moves > 3 and not in_check and not check_move and not game.is_capture(move):
                     reduction = 1 
 
-                score = -self.search(cpy, depth - 1 - reduction + ext, -alpha - 1, -alpha, ply + 1, True)
+                score = -self.search(cpy, depth - 1 - reduction + ext, -alpha - 1, -alpha, ply + 1, True, move)
                 if score > alpha and reduction != 0:
-                    score = -self.search(cpy, depth - 1 + ext, -alpha - 1, -alpha, ply + 1, True)
+                    score = -self.search(cpy, depth - 1 + ext, -alpha - 1, -alpha, ply + 1, True, move)
                 if score > alpha and score < beta:
-                    score = -self.search(cpy, depth - 1 + ext, -beta, -alpha, ply + 1, True)
+                    score = -self.search(cpy, depth - 1 + ext, -beta, -alpha, ply + 1, True, move)
             cpy.positions.pop()
             if score > best_score:
                 best_score = score
@@ -529,6 +536,7 @@ class Searcher:
                     if score >= beta:
                         if not game.is_capture(move): # Update history tables
                             self.history[move] = min(HIST_MAX, self.history.get(move, 0) + depth * depth)
+                            if opp_move: self.counter_move[opp_move] = move
                             k, k2 = self.killer.get(ply), self.killer2.get(ply)
                             if k != k2:
                                 self.killer2[ply] = k
@@ -559,6 +567,7 @@ class Searcher:
 
         # Reset history tables
         self.history = {}
+        self.counter_move = {}
         self.killer = {}
         self.killer2 = {}
         self.tt = {}
@@ -574,7 +583,7 @@ class Searcher:
         # Iterative Deepening with Aspiration Windows
         while d < 80:
             self.start_depth = d
-            score = self.search(game, d, alpha, beta, 0, True, True)
+            score = self.search(game, d, alpha, beta, 0, True, None, True)
 
             if time.perf_counter() > self.finish_time and d > 1:
                 break

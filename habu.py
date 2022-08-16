@@ -351,6 +351,8 @@ class Game():
 # Search algorithm
 #
 
+import math
+
 class Searcher:
     def __init__(self):
         self.nodes = 0
@@ -520,8 +522,14 @@ class Searcher:
             else:
                 # Late Move Reductions for quiet moves
                 reduction = 0
-                if depth >= 3 and legal_moves > 3 and not in_check and not check_move and not game.is_capture(move):
-                    reduction = 1 
+                if depth >= 3 and not in_check and not check_move and not game.is_capture(move):
+                    reduction = 1 + int(math.log(depth) * math.log(legal_moves) * 0.5)
+                    if root: reduction -= 1
+                    if is_pv_node: reduction -= 1
+                    reduction -= scores[move] // HIST_MAX
+                    if reduction >= depth - 1 + ext:
+                        reduction = depth - 2 + ext
+                    reduction = max(0, reduction)
 
                 score = -self.search(cpy, depth - 1 - reduction + ext, -alpha - 1, -alpha, ply + 1, True, move)
                 if score > alpha and reduction != 0:

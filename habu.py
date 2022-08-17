@@ -1,4 +1,5 @@
 import time
+import math
 from ctypes import *
 
 # Load NNUE probe and init weights
@@ -112,6 +113,7 @@ FUTILITY_MARGIN = 180
 RAZOR_MARGIN = 500
 ASPIRATION_DELTA = 30
 
+def lmr(d, lm): return 1 + int(math.log(d) * math.log(lm) * 0.5)
 #
 # Misc functions
 #
@@ -351,8 +353,6 @@ class Game():
 # Search algorithm
 #
 
-import math
-
 class Searcher:
     def __init__(self):
         self.nodes = 0
@@ -473,7 +473,7 @@ class Searcher:
                 if score < beta:
                     return score
 
-            # Futility Pruning
+            # Reverse futility pruning
             if depth <= 6 and evalu >= beta + FUTILITY_MARGIN * depth:
                 return evalu
 
@@ -509,12 +509,22 @@ class Searcher:
                 continue
             legal_moves += 1
             cpy.rotate()
-            cpy.positions.append(cpy.to_fen())
 
             check_move = cpy.in_check()
+
+            prunable = not (root or check_move or in_check or game.is_capture(move) or move == hash_move) and best_score > -MATE_SCORE + 100
+            lmr_reduction = lmr(depth, legal_moves)
+            if is_pv_node: lmr_reduction -= 1
+            
+            # Futility pruning
+            if prunable and depth - lmr_reduction <= 6 and evalu <= alpha - FUTILITY_MARGIN - FUTILITY_MARGIN * (max(0, depth - lmr_reduction)):
+                continue
+
             # Check extension
             ext = 1 if check_move and not root else 0
-            
+        
+            cpy.positions.append(cpy.to_fen())
+
             # Principal Variation Search
             score = None
             if legal_moves == 1:
@@ -523,9 +533,8 @@ class Searcher:
                 # Late Move Reductions for quiet moves
                 reduction = 0
                 if depth >= 3 and not in_check and not check_move and not game.is_capture(move):
-                    reduction = 1 + int(math.log(depth) * math.log(legal_moves) * 0.5)
+                    reduction = lmr_reduction
                     if root: reduction -= 1
-                    if is_pv_node: reduction -= 1
                     reduction -= scores[move] // HIST_MAX
                     if reduction >= depth - 1 + ext:
                         reduction = depth - 2 + ext

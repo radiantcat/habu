@@ -111,7 +111,7 @@ TT_LOWER = 3
 
 FUTILITY_MARGIN = 180
 RAZOR_MARGIN = 500
-ASPIRATION_DELTA = 30
+ASPIRATION_DELTA = 15
 
 def lmr(d, lm): return 1 + int(math.log(d) * math.log(lm) * 0.5)
 #
@@ -512,12 +512,16 @@ class Searcher:
 
             check_move = cpy.in_check()
 
-            prunable = not (root or check_move or in_check or game.is_capture(move) or move == hash_move) and best_score > -MATE_SCORE + 100
+            prunable = not (is_pv_node or check_move or in_check or game.is_capture(move) or legal_moves == 1) and best_score > -MATE_SCORE + 100
             lmr_reduction = lmr(depth, legal_moves)
             if is_pv_node: lmr_reduction -= 1
             
             # Futility pruning
             if prunable and depth - lmr_reduction <= 6 and evalu <= alpha - FUTILITY_MARGIN - FUTILITY_MARGIN * (max(0, depth - lmr_reduction)):
+                continue
+
+            # Counter move history pruning
+            if prunable and depth - lmr_reduction <= 2 and self.counter_hist.get((opp_move, move), 0) <= 0 and scores[move] < -depth*depth:
                 continue
 
             # Check extension
@@ -546,6 +550,7 @@ class Searcher:
                 if score > alpha and score < beta:
                     score = -self.search(cpy, depth - 1 + ext, -beta, -alpha, ply + 1, True, move)
             cpy.positions.pop()
+
             if score > best_score:
                 best_score = score
                 best_move = move
@@ -566,10 +571,12 @@ class Searcher:
                         tt_flag = TT_LOWER
                         for m in movelist:
                             if m == move: break
+                            if game.is_capture(m): continue
                             self.history[m] = max(-HIST_MAX, self.history.get(m, 0) - depth * depth)
                             if opp_move:
                                 self.counter_hist[(opp_move, m)] = max(-HIST_MAX, self.counter_hist.get((opp_move, m), 0) - depth * depth)
                         break
+            
 
         if legal_moves == 0:
             if game.in_check():
@@ -619,17 +626,15 @@ class Searcher:
             if score <= alpha:
                 asp_cnt += 1
                 alpha -= ASPIRATION_DELTA * 2**asp_cnt
-                print('info depth {} time {} nodes {} nps {} score cp {}'.format(d, time_elapsed, self.nodes, nps, score))
                 continue
             elif score >= beta:
                 asp_cnt += 1
                 beta += ASPIRATION_DELTA * 2**asp_cnt
-                print('info depth {} time {} nodes {} nps {} score cp {}'.format(d, time_elapsed, self.nodes, nps, score))
                 continue
 
             move = self.b_move
 
-            print('info depth {} time {} nodes {} nps {} score cp {} pv {}'.format(d, time_elapsed, self.nodes, nps, score, game.uci_move(move)))
+            print('info depth {} time {} nodes {} nps {} score cp {} pv {}'.format(d, time_elapsed, self.nodes, nps, int(score / 2.56), game.uci_move(move)))
             if d >= 4:
                 alpha = score - ASPIRATION_DELTA
                 beta = score + ASPIRATION_DELTA
@@ -660,9 +665,9 @@ def main():
             c_split = command.split()
             for idx, val in enumerate(c_split):
                 if val == 'wtime' and g.side:
-                    move_time = int(c_split[idx + 1]) / 40000
+                    move_time = int(c_split[idx + 1]) / 30000
                 elif val == 'btime' and not g.side:
-                    move_time = int(c_split[idx + 1]) / 40000
+                    move_time = int(c_split[idx + 1]) / 30000
             s.reset_timer(move_time)
             s.search_iterative(g)
 

@@ -365,6 +365,7 @@ class Searcher:
         self.killer = {} # Killer move for each ply
         self.killer2 = {}
         self.tt = {} # Transposition table
+        self.threat = {}
 
         self.start_depth = 0
 
@@ -375,27 +376,33 @@ class Searcher:
         # Give every move a score for ordering
         killer_move = self.killer.get(ply)
         killer_move2 = self.killer2.get(ply)
+        threat_move = self.threat.get(ply)
         counter = self.counter_move.get(opp_move)
         scores = {}
         for move in movelist:
             if move == hash_move:
                 scores[move] = 2 * HIST_MAX + 5000
+            elif move == threat_move:
+                if game.is_capture(move):
+                    scores[move] = 2 * HIST_MAX + 4990
+                else:
+                    scores[move] = 2 * HIST_MAX + 1
             elif game.is_capture(move):
                 scores[move] = 2 * HIST_MAX + 2000 + piece_vals[game.board[move[1]] - 6] - piece_vals[game.board[move[0]]]
             else:
                 if move == killer_move:
-                    scores[move] = 2 * HIST_MAX + 3
+                    scores[move] = 2 * HIST_MAX + 4
                 elif move == killer_move2:
-                    scores[move] = 2 * HIST_MAX + 2
+                    scores[move] = 2 * HIST_MAX + 3
                 elif move == counter:
-                    scores[move] = 2 * HIST_MAX + 1
+                    scores[move] = 2 * HIST_MAX + 2
                 else:
                     scores[move] = self.history.get(move, 0)
                     scores[move] += self.counter_hist.get((opp_move, move), 0)
 
         return scores
 
-    def qsearch(self, game, alpha, beta):
+    def qsearch(self, game, alpha, beta, ply):
         val = game.evaluate_nnue()
 
         self.nodes += 1
@@ -405,9 +412,23 @@ class Searcher:
         if alpha < val:
             alpha = val
 
+        hash_move = None
+        # Probe transposition table
+        tt_entry = self.tt.get(game.positions[-1])
+        if tt_entry:
+            hash_move = tt_entry[1]
+            if tt_entry[2] >= -ply:
+                if tt_entry[3] == TT_EXACT or \
+                    (tt_entry[3] == TT_LOWER and tt_entry[0] >= beta) or \
+                    (tt_entry[3] == TT_UPPER and tt_entry[0] <= alpha):
+                    return tt_entry[0]
+
         movelist = [m for m in game.movegen() if game.is_capture(m)]
-        scores = self.move_values(game, movelist, 0, None, None)
+        scores = self.move_values(game, movelist, 0, None, hash_move)
         movelist.sort(key = lambda x: scores[x], reverse=True)
+
+        tt_flag = TT_UPPER
+        best_move = None
 
         for move in movelist:
             
@@ -419,15 +440,19 @@ class Searcher:
             cpy.positions.append(cpy.to_fen())
             self.nodes += 1
 
-            score = -self.qsearch(cpy, -beta, -alpha)
+            score = -self.qsearch(cpy, -beta, -alpha, ply + 1)
 
             cpy.positions.pop()
             if score > val:
                 val = score
                 if score > alpha:
                     alpha = score
+                    tt_flag = TT_EXACT
+                    best_move = move
                     if score >= beta:
+                        tt_flag = TT_LOWER
                         break
+        self.tt[game.positions[-1]] = (val, best_move, -ply, tt_flag)
 
         return val
 
@@ -441,7 +466,7 @@ class Searcher:
                 if repetitions > 1: return 0
 
         if depth <= 0:
-            return self.qsearch(game, alpha, beta)
+            return self.qsearch(game, alpha, beta, ply)
         
         self.nodes += 1
 
@@ -465,11 +490,12 @@ class Searcher:
 
         in_check = game.in_check()
         evalu = game.evaluate_nnue()
-
+        
+        self.threat[ply + 1] = None
         if not is_pv_node and do_pruning and not in_check:
             # Razoring
             if depth <= 3 and evalu + RAZOR_MARGIN < beta:
-                score = self.qsearch(game, alpha, beta)
+                score = self.qsearch(game, alpha, beta, ply)
                 if score < beta:
                     return score
 
@@ -488,6 +514,11 @@ class Searcher:
                 cpy.positions.pop()
                 if score >= beta:
                     return score
+                else:
+                    tt_entry = self.tt.get(game.positions[-1])
+                    if tt_entry:
+                        self.threat[ply + 1] = tt_entry[1]
+
 
         best_move = None
         best_score = -MATE_SCORE
@@ -601,6 +632,7 @@ class Searcher:
         self.counter_move = {}
         self.killer = {}
         self.killer2 = {}
+        self.threat = {}
         self.tt = {}
 
         move = None

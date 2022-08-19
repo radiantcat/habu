@@ -109,7 +109,7 @@ TT_EXACT = 1
 TT_UPPER = 2
 TT_LOWER = 3
 
-FUTILITY_MARGIN = 180
+PRUNE_MARGIN = 180
 RAZOR_MARGIN = 500
 ASPIRATION_DELTA = 15
 
@@ -500,7 +500,7 @@ class Searcher:
                     return score
 
             # Reverse futility pruning
-            if depth <= 6 and evalu >= beta + FUTILITY_MARGIN * depth:
+            if depth <= 6 and evalu >= beta + PRUNE_MARGIN * depth:
                 return evalu
 
             # Null move pruning 
@@ -508,7 +508,7 @@ class Searcher:
                 cpy = game.copy()
                 cpy.enp = 0
                 cpy.rotate()
-                reduction = 3
+                reduction = 3 + depth // 3 + min(3, (evalu - beta) // PRUNE_MARGIN)
                 cpy.positions.append(cpy.to_fen())
                 score = -self.search(cpy, depth - reduction, -beta, -beta + 1, ply + 1, False, None)
                 cpy.positions.pop()
@@ -548,11 +548,15 @@ class Searcher:
             if is_pv_node: lmr_reduction -= 1
             
             # Futility pruning
-            if prunable and depth - lmr_reduction <= 6 and evalu <= alpha - FUTILITY_MARGIN - FUTILITY_MARGIN * (max(0, depth - lmr_reduction)):
+            if prunable and depth - lmr_reduction <= 6 and evalu <= alpha - PRUNE_MARGIN - PRUNE_MARGIN * (max(0, depth - lmr_reduction)):
                 continue
 
             # Counter move history pruning
             if prunable and depth - lmr_reduction <= 2 and self.counter_hist.get((opp_move, move), 0) <= 0 and scores[move] < -depth*depth:
+                continue
+
+            # Late move pruning
+            if prunable and depth - lmr_reduction <= 1 and evalu <= alpha and legal_moves > 7:
                 continue
 
             # Check extension

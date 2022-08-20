@@ -456,7 +456,7 @@ class Searcher:
 
         return val
 
-    def search(self, game, depth, alpha, beta, ply, do_pruning, opp_move, root = False):
+    def search(self, game, depth, alpha, beta, ply, do_pruning, opp_move, is_cut_node, root = False):
 
         repetitions = 0
         if not root:
@@ -510,7 +510,7 @@ class Searcher:
                 cpy.rotate()
                 reduction = 3 + depth // 3 + min(3, (evalu - beta) // PRUNE_MARGIN)
                 cpy.positions.append(cpy.to_fen())
-                score = -self.search(cpy, depth - reduction, -beta, -beta + 1, ply + 1, False, None)
+                score = -self.search(cpy, depth - reduction, -beta, -beta + 1, ply + 1, False, None, not is_cut_node)
                 cpy.positions.pop()
                 if score >= beta:
                     return score
@@ -524,6 +524,9 @@ class Searcher:
         best_score = -MATE_SCORE
         legal_moves = 0
         tt_flag = TT_UPPER
+
+        # Internal iterative reductions
+        iir = not (root or hash_move or in_check) and (depth > 4 and is_cut_node or is_pv_node)
 
         # Generate and sort moves
         movelist = game.movegen()
@@ -545,6 +548,7 @@ class Searcher:
 
             prunable = not (is_pv_node or check_move or in_check or game.is_capture(move) or legal_moves == 1) and best_score > -MATE_SCORE + 100
             lmr_reduction = lmr(depth, legal_moves)
+            if iir: lmr_reduction += 3 if is_pv_node else 1
             if is_pv_node: lmr_reduction -= 1
             
             # Futility pruning
@@ -567,23 +571,24 @@ class Searcher:
             # Principal Variation Search
             score = None
             if legal_moves == 1:
-                score = -self.search(cpy, depth - 1 + ext, -beta, -alpha, ply + 1, True, move)
+                score = -self.search(cpy, depth - 1 + ext, -beta, -alpha, ply + 1, True, move, False if is_pv_node else not is_cut_node)
             else:
                 # Late Move Reductions for quiet moves
                 reduction = 0
                 if depth >= 3 and not in_check and not check_move and not game.is_capture(move):
                     reduction = lmr_reduction
+                    if is_cut_node: reduction += 2
                     if root: reduction -= 1
                     reduction -= scores[move] // HIST_MAX
                     if reduction >= depth - 1 + ext:
                         reduction = depth - 2 + ext
                     reduction = max(0, reduction)
 
-                score = -self.search(cpy, depth - 1 - reduction + ext, -alpha - 1, -alpha, ply + 1, True, move)
+                score = -self.search(cpy, depth - 1 - reduction + ext, -alpha - 1, -alpha, ply + 1, True, move, True)
                 if score > alpha and reduction != 0:
-                    score = -self.search(cpy, depth - 1 + ext, -alpha - 1, -alpha, ply + 1, True, move)
+                    score = -self.search(cpy, depth - 1 + ext, -alpha - 1, -alpha, ply + 1, True, move, not is_cut_node)
                 if score > alpha and score < beta:
-                    score = -self.search(cpy, depth - 1 + ext, -beta, -alpha, ply + 1, True, move)
+                    score = -self.search(cpy, depth - 1 + ext, -beta, -alpha, ply + 1, True, move, False)
             cpy.positions.pop()
 
             if score > best_score:
@@ -650,7 +655,7 @@ class Searcher:
         # Iterative Deepening with Aspiration Windows
         while d < 80:
             self.start_depth = d
-            score = self.search(game, d, alpha, beta, 0, True, None, True)
+            score = self.search(game, d, alpha, beta, 0, True, None, False, True)
 
             if time.perf_counter() > self.finish_time and d > 1:
                 break

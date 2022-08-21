@@ -7,10 +7,14 @@ Habu is a chess engine written in Python inspired by Sunfish. I recommend using 
 - Iterative deepening with aspiration windows
 - Fail-soft principal variation search
 - Null move pruning
+- Razoring
+- Futility pruning
 - Late move reductions
+- Late move pruning
+- Countermove history based pruning
 - Check extensions
 - Transposition table
-- Move ordering with MVV-LVA, killer and history heuristics
+- Move ordering with MVV-LVA, threat move, counter move, killer and history heuristics
 
 ## NNUE
 Habu uses NNUE for evaluation. NNUE library needs to be compiled

@@ -153,6 +153,14 @@ class Game():
     def copy(self):
         return Game(self.board.copy(), self.side, self.w_castle, self.w_lcastle, self.b_castle, self.b_lcastle, self.enp, self.positions)
 
+    def close_to_startpos(self):
+        cnt, wcnt, bcnt = 0, 0, 0
+        while cnt < 16:
+            if my_piece(self.board[mailbox64[cnt]]): wcnt += 1
+            if opp_piece(self.board[mailbox64[63 - cnt]]): bcnt += 1
+            cnt += 1
+        return wcnt >= 11 and bcnt >= 11
+
     def initial_pos(self):
         self.parse_fen('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
         
@@ -358,6 +366,7 @@ class Searcher:
         self.nodes = 0
         self.b_move = 0
         self.finish_time = 0
+        self.stop_search = False
 
         self.history = {} # History table for move ordering
         self.counter_hist = {}
@@ -369,8 +378,10 @@ class Searcher:
 
         self.start_depth = 0
 
-    def reset_timer(self, tt):
-        self.finish_time = time.perf_counter() + tt
+    def set_timer(self, ttime):
+        self.finish_time = time.perf_counter() + ttime
+    def refresh_timer(self, ttime):
+        self.finish_time += ttime
 
     def move_values(self, game, movelist, ply, opp_move, hash_move):
         # Give every move a score for ordering
@@ -452,6 +463,7 @@ class Searcher:
                     if score >= beta:
                         tt_flag = TT_LOWER
                         break
+        if self.stop_search: return val
         self.tt[game.positions[-1]] = (val, best_move, -ply, tt_flag)
 
         return val
@@ -535,6 +547,7 @@ class Searcher:
 
         for move in movelist:            
             if self.nodes % 50000 == 0 and self.start_depth > 1 and time.perf_counter() > self.finish_time:
+                self.stop_search = True
                 break
             # Copy-Make
             cpy = game.copy()
@@ -617,7 +630,7 @@ class Searcher:
                                 self.counter_hist[(opp_move, m)] = max(-HIST_MAX, self.counter_hist.get((opp_move, m), 0) - depth * depth)
                         break
             
-
+        if self.stop_search: return best_score
         if legal_moves == 0:
             if game.in_check():
                 return -MATE_SCORE + ply
@@ -632,8 +645,12 @@ class Searcher:
 
         return best_score
 
-    def search_iterative(self, game):
+    def search_iterative(self, game, time_remaining):
         start_time = time.perf_counter()
+        move_time = time_remaining / 30000
+        tf_sum = 0
+        if game.close_to_startpos(): move_time /= 2
+        self.set_timer(move_time)
 
         # Reset history tables
         self.history = {}
@@ -642,15 +659,17 @@ class Searcher:
         self.killer = {}
         self.killer2 = {}
         self.threat = {}
-        self.tt = {}
 
-        move = None
+        self.stop_search = False
+
+        prev_move = None
         self.nodes = 0
         time_1 = time.perf_counter()
 
         alpha, beta = -MATE_SCORE, MATE_SCORE
         d = 1
         asp_cnt = 0
+        prev_score = 0
 
         # Iterative Deepening with Aspiration Windows
         while d < 80:
@@ -664,6 +683,18 @@ class Searcher:
             nps = int(self.nodes / (time_2 - time_1))
             time_elapsed = int((time.perf_counter() - start_time) * 1000)
             
+            if d > 4 and not game.close_to_startpos():
+                time_factor = 0.0
+                if prev_move == self.b_move and asp_cnt == 0:
+                    time_factor -= 0.2
+                else:
+                    time_factor += 0.1
+                if prev_score > score:
+                    time_factor += min(1.0, (prev_score - score) / PRUNE_MARGIN)
+                if tf_sum > 1.5: time_factor = min(time_factor, 0.0)
+                tf_sum += time_factor
+                self.refresh_timer(move_time * time_factor)
+
             if score <= alpha:
                 asp_cnt += 1
                 alpha -= ASPIRATION_DELTA * 2**asp_cnt
@@ -673,17 +704,22 @@ class Searcher:
                 beta += ASPIRATION_DELTA * 2**asp_cnt
                 continue
 
-            move = self.b_move
+            
 
-            print('info depth {} time {} nodes {} nps {} score cp {} pv {}'.format(d, time_elapsed, self.nodes, nps, int(score / 2.56), game.uci_move(move)))
+            prev_move = self.b_move
+
+            print('info depth {} time {} nodes {} nps {} score cp {} pv {}'.format(d, time_elapsed, self.nodes, nps, int(score / 2.56), game.uci_move(prev_move)))
             if d >= 4:
                 alpha = score - ASPIRATION_DELTA
                 beta = score + ASPIRATION_DELTA
 
+            
+
             asp_cnt = 0
             d += 1
+            prev_score = score
 
-        print(f'bestmove {game.uci_move(move)}')
+        print(f'bestmove {game.uci_move(prev_move)}')
 
 
 def main():
@@ -702,15 +738,14 @@ def main():
             print('readyok')
 
         elif command.startswith('go'):
-            move_time = 10
+            time_remaining = 30000
             c_split = command.split()
             for idx, val in enumerate(c_split):
                 if val == 'wtime' and g.side:
-                    move_time = int(c_split[idx + 1]) / 30000
+                    time_remaining = float(c_split[idx + 1])
                 elif val == 'btime' and not g.side:
-                    move_time = int(c_split[idx + 1]) / 30000
-            s.reset_timer(move_time)
-            s.search_iterative(g)
+                    time_remaining = float(c_split[idx + 1])
+            s.search_iterative(g, time_remaining)
 
         elif command.startswith('position'):
             g.uci_position(command)

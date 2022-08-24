@@ -1,7 +1,7 @@
 # Habu
 Habu is a chess engine written in Python inspired by Sunfish. I recommend using [PyPy Just-In-Time intepreter](https://pypy.org/) for better performance.
 It even manages to beat Fruit 2.1! (example is shown playing black pieces)
-![](fruit.gif =250x250)
+<img src="fruit.gif" width="250"/>
 ### Features
 
 - Quiescense search with NNUE evaluation
